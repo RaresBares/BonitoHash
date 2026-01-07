@@ -46,7 +46,8 @@ def main(args):
     print("[loading model]")
     if args.pretrained:
         print(f"[using pretrained model {args.pretrained}]")
-        model = load_model(args.pretrained, device, half=False)
+        # We don't compile here as we will compile later
+        model = load_model(args.pretrained, device, half=False, compile=False)
     else:
         model = load_symbol(config, 'Model')(config)
 
