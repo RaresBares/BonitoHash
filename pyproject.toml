@@ -15,8 +15,8 @@ authors = [
 urls = { Homepage = "https://github.com/nanoporetech/bonito" }
 
 [project.optional-dependencies]
-cu128 = ["torch==2.9.0+cu128"]
-cu130 = ["torch==2.9.0+cu130"]
+cu128 = ["torch==2.9.1+cu128"]
+cu130 = ["torch==2.9.1+cu130"]
 
 [project.scripts]
 bonito = "bonito:main"
