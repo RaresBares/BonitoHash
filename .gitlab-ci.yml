@@ -7,8 +7,7 @@
   script:
     - python3 -m venv venv
     - source venv/bin/activate
-    - pip install uv
-    - uv pip install -e .[cu${CUDA_VERSION}] --extra-index-url https://download.pytorch.org/whl/cu${CUDA_VERSION}
+    - pip install -e .[cu${CUDA_VERSION}] ${PYTORCH_MIRROR}
     - bonito --version  # minimal sanity check
     - python -m unittest discover
 
