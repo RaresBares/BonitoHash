@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 from importlib import import_module
 from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
+import random
 
 import toml
 import torch
@@ -24,7 +25,8 @@ def main(args):
         exit(1)
     os.makedirs(workdir, exist_ok=True)
 
-    init(args.seed, args.device, (not args.nondeterministic))
+    seed = args.seed or random.randint(0, 2**32 - 1)
+    init(seed, args.device, (not args.nondeterministic))
     device = torch.device(args.device)
 
     if not args.pretrained:
@@ -71,7 +73,7 @@ def main(args):
     compute_settings = ComputeSettings(
         batch_size=args.batch,
         num_workers=args.num_workers,
-        seed=args.seed,
+        seed=seed,
     )
 
     train_loader, valid_loader = load_data(data, model_setup, compute_settings)
@@ -122,7 +124,7 @@ def argparser():
     parser.add_argument("--directory", type=Path)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--lr", default='2e-3')
-    parser.add_argument("--seed", default=25, type=int)
+    parser.add_argument("--seed", default=None, type=int)
     parser.add_argument("--epochs", default=5, type=int)
     parser.add_argument("--batch", default=64, type=int)
     parser.add_argument("--chunks", type=int, help="Number of training chunks per epoch")
