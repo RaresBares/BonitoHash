@@ -44,18 +44,18 @@ def load_state(dirname, device, model, optim=None):
         weight_no = max(weight_nos, default=None)
 
     if weight_no is None:
-        return 0 
+        return 0
 
     for name, obj in to_load:
         print(f"[loading state] - {name}_{weight_no}.tar")
         state_dict = torch.load(
-            dirname / f"{name}_{weight_no}.tar", 
-            map_location=device, 
+            dirname / f"{name}_{weight_no}.tar",
+            map_location=device,
             weights_only=False,
-        )        
+        )
         if name == "weights":
             state_dict = {
-                k2.replace('module.', ''): state_dict[k1] 
+                k2.replace('module.', ''): state_dict[k1]
                 for k1, k2 in match_names(state_dict, obj).items()
             }
         obj.load_state_dict(state_dict)
@@ -87,7 +87,7 @@ class Trainer:
         self, model, device, train_loader, valid_loader, criterion=None,
         use_amp=True, lr_scheduler_fn=None, restore_optim=False,
         save_optim_every=10, grad_accum_split=1, quantile_grad_clip=False,
-        chunks_per_epoch=None, batch_size=None,
+        chunks_per_epoch=None, batch_size=None, fixed_grad_scale=None
     ):
         self.model = model.to(device)
         self.device = device
@@ -99,7 +99,14 @@ class Trainer:
         self.restore_optim = restore_optim
         self.save_optim_every = save_optim_every
         self.grad_accum_split = grad_accum_split
-        self.scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+
+        self.fixed_grad_scale = fixed_grad_scale
+        self.scaler = torch.amp.GradScaler(
+            "cuda",
+            enabled=use_amp,
+            **({"init_scale": fixed_grad_scale} if fixed_grad_scale else {})
+        )
+
         self.optimizer = None
         if quantile_grad_clip:
             self.clip_grad = ClipGrad()
@@ -137,7 +144,7 @@ class Trainer:
         self.scaler.unscale_(self.optimizer)
         grad_norm = self.clip_grad(self.model.parameters())
         self.scaler.step(self.optimizer)
-        self.scaler.update()
+        self.scaler.update(self.fixed_grad_scale)
 
         return losses, grad_norm, scale
 

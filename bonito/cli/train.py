@@ -53,10 +53,11 @@ def main(args):
     else:
         model = load_symbol(config, 'Model')(config)
 
-    try:
-        model = torch.compile(model)
-    except RuntimeError as e:
-        print(f"[warning] Torch model failed to compile, performance may be degraded. {e}")
+    if not args.no_compile:
+        try:
+            model = torch.compile(model)
+        except RuntimeError as e:
+            print(f"[warning] Torch model failed to compile, performance may be degraded. {e}")
 
     print("[loading data]")
     data = DataSettings(
@@ -103,6 +104,7 @@ def main(args):
         quantile_grad_clip=args.quantile_grad_clip,
         chunks_per_epoch=args.chunks,
         batch_size=args.batch,
+        fixed_grad_scale=config.get("train", {}).get("fixed_grad_scale")
     )
 
     if (',' in args.lr):
@@ -135,6 +137,7 @@ def argparser():
     parser.add_argument("--nondeterministic", action="store_true", default=False)
     parser.add_argument("--save-optim-every", default=10, type=int)
     parser.add_argument("--grad-accum-split", default=1, type=int)
+    parser.add_argument("--no-compile", action="store_true", default=False)
     quantile_group = parser.add_mutually_exclusive_group()
     quantile_group.add_argument('--quantile-grad-clip', dest='quantile_grad_clip', action='store_true')
     quantile_group.add_argument('--no-quantile-grad-clip', dest='quantile_grad_clip', action='store_false')
