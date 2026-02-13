@@ -25,8 +25,8 @@ def main(args):
         exit(1)
     os.makedirs(workdir, exist_ok=True)
 
-    seed = args.seed or random.randint(0, 2**32 - 1)
-    init(seed, args.device, (not args.nondeterministic))
+    args.seed = args.seed or random.randint(0, 2**32 - 1)
+    init(args.seed, args.device, (not args.nondeterministic))
     device = torch.device(args.device)
 
     if not args.pretrained:
@@ -74,7 +74,7 @@ def main(args):
     compute_settings = ComputeSettings(
         batch_size=args.batch,
         num_workers=args.num_workers,
-        seed=seed,
+        seed=args.seed,
     )
 
     train_loader, valid_loader = load_data(data, model_setup, compute_settings)
