@@ -1,46 +1,47 @@
-.build_template: &build_template
+stages:
+  - test
+  - deploy
+
+.runner:
+  image: ${CI_REGISTRY}/traque/ont-docker-base/ont-base-python:${PYTHON_VERSION}
   tags:
     - docker
     - linux_x86
-  except:
-    - tags  # Don't run CI for release‐tags
+
+build_bonito:
+  stage: test
+  extends: .runner
+  parallel:
+    matrix:
+      - CUDA_VERSION: ["128", "130"]
+        PYTHON_VERSION: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - when: on_success
   script:
     - python3 -m venv venv
     - source venv/bin/activate
     - pip install -e .[cu${CUDA_VERSION}] ${PYTORCH_MIRROR}
     - bonito --version  # minimal sanity check
     - python -m unittest discover
+    # Check we can build a wheel
+    - pip install build twine
+    - python -m build
+    - test -n "$(find dist -type f -name '*.whl' -print)"
 
-build_bonito:
-  stage: build
-  image: ${CI_REGISTRY}/traque/ont-docker-base/ont-base-python:${PYTHON_VERSION}
-  parallel:
-    matrix:
-      - CUDA_VERSION: ["128", "130"]
-        PYTHON_VERSION: ["3.10", "3.11", "3.12", "3.13", "3.14"]
-  <<: *build_template
 
-sre-test:
-  image: ${TRIGGER_IMAGE}
-  stage: test
-  when: manual
-  dependencies: []
+deploy:external_PyPI:
+  stage: deploy
+  extends: .runner
   variables:
-    GIT_STRATEGY: none
+    PYTHON_VERSION: "3.13"
+  rules: # Trigger manually when a gitlab-tag is created
+    - if: $CI_COMMIT_TAG
+      when: manual
+    - when: never
   script:
-    - echo ${CI_COMMIT_TITLE}
-    - |
-      curl -i --header "Content-Type: application/json" \
-      --request POST \
-      --data '{
-          "key": "'${MLHUB_TRIGGER_KEY}'",
-          "job_name": "Bonito SRE: '${CI_COMMIT_REF_NAME}' - '"$CI_COMMIT_TITLE"' ",
-          "script_parameters": {
-              "bonito_version":"'${CI_COMMIT_SHA}'",
-              "sre_output":"'${SRE_OUTPUT_ROOT}'/'${CI_COMMIT_SHA}'/",
-              "models":["dna_r10.4.1_e8.2_400bps_fast@v4.3.0","dna_r10.4.1_e8.2_400bps_hac@v4.3.0","dna_r10.4.1_e8.2_400bps_sup@v4.3.0"],
-              "validation_set_path":"'${SRE_OUTPUT_ROOT}'/validation_sets",
-              "validation_data_type":"prom"
-          }
-      }' \
-      ${MLHUB_TRIGGER_URL}
+    - pip install build twine
+    - python -m build
+    - ls -lh dist/*.whl
+    - twine upload --repository-url ${PYPI_EXTERNAL} dist/*.whl
