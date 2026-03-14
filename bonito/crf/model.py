@@ -9,7 +9,7 @@ import koi.lstm
 from koi.ctc import SequenceDist, Max, Log, semiring
 from koi.ctc import logZ_cu, viterbi_alignments, logZ_cu_sparse, bwd_scores_cu_sparse, fwd_scores_cu_sparse
 
-from bonito.nn import Module, Convolution, LinearCRFEncoder, Serial, Permute, layers, to_dict, from_dict, register
+from bonito.nn import Module, Convolution, LinearCRFEncoder, Serial, Permute, ReferenceAwareEncoder, layers, to_dict, from_dict, register
 
 
 def get_stride(m, stride=1):
@@ -163,10 +163,12 @@ def rnn_encoder(n_base, state_len, insize=1, first_conv_size=4, stride=5, winlen
 
 @register
 class SeqdistModel(Module):
-    def __init__(self, encoder, seqdist, n_pre_post_context_bases=None, target_projection=None):
+    def __init__(self, encoder, seqdist, n_pre_post_context_bases=None, target_projection=None,
+                 ref_embedder=None):
         super().__init__()
         self.seqdist = seqdist
         self.encoder = encoder
+        self.ref_embedder = ref_embedder
         self.stride = get_stride(encoder)
         self.alphabet = seqdist.alphabet
 
@@ -188,9 +190,17 @@ class SeqdistModel(Module):
             encoder=from_dict(model_dict["encoder"], layer_types),
             seqdist=CTC_CRF(**model_dict["seqdist"])
         )
+        if "ref_embedder" in model_dict:
+            kwargs["ref_embedder"] = from_dict(model_dict["ref_embedder"], layer_types)
         return cls(**kwargs)
 
     def forward(self, x, *args):
+        R = None
+        if self.ref_embedder is not None and len(args) >= 2:
+            kmer_ids, expected_signals = args[0], args[1]
+            R = self.ref_embedder(kmer_ids, expected_signals)
+        if isinstance(self.encoder, ReferenceAwareEncoder):
+            return self.encoder(x, R=R)
         return self.encoder(x)
 
     def decode_batch(self, x):
@@ -219,6 +229,8 @@ class SeqdistModel(Module):
         }
         if self.target_projection is not None:
             res["target_projection"] = self.target_projection.tolist()[1:]
+        if self.ref_embedder is not None:
+            res["ref_embedder"] = to_dict(self.ref_embedder)
         return res
 
 

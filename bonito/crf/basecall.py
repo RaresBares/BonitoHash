@@ -24,13 +24,21 @@ def stitch_results(results, length, size, overlap, stride, reverse=False):
     return stitch(results, size, overlap, length, stride, reverse=reverse)
 
 
-def compute_scores(model, batch, beam_width=32, beam_cut=100.0, scale=1.0, offset=0.0, blank_score=2.0, reverse=False):
+def compute_scores(model, batch, beam_width=32, beam_cut=100.0, scale=1.0, offset=0.0, blank_score=2.0, reverse=False, ref_data=None):
     """
     Compute scores for model.
     """
     with torch.inference_mode():
         device = next(model.parameters()).device
-        scores = model(batch.to(torch.float16).to(device))
+        if ref_data is not None:
+            kmer_ids, expected_signals = ref_data
+            scores = model(
+                batch.to(torch.float16).to(device),
+                kmer_ids.to(device),
+                expected_signals.to(device),
+            )
+        else:
+            scores = model(batch.to(torch.float16).to(device))
         if reverse:
             scores = model.seqdist.reverse_complement(scores)
         with torch.cuda.device(scores.device):
@@ -56,9 +64,11 @@ def fmt(stride, attrs, rna=False):
 
 
 def basecall(model, reads, chunksize=4000, overlap=100, batchsize=32,
-             reverse=False, rna=False):
+             reverse=False, rna=False, ref_provider=None):
     """
     Basecalls a set of reads.
+
+    ref_provider: optional callable(read) -> (kmer_ids_tensor, expected_signals_tensor) or None
     """
     chunks = thread_iter(
         ((read, 0, read.signal.shape[-1]), chunk(torch.from_numpy(read.signal), chunksize, overlap))
@@ -67,9 +77,14 @@ def basecall(model, reads, chunksize=4000, overlap=100, batchsize=32,
 
     batches = thread_iter(batchify(chunks, batchsize=batchsize))
 
-    scores = thread_iter(
-        (read, compute_scores(model, batch, reverse=reverse)) for read, batch in batches
-    )
+    def _compute(read_batch):
+        read, batch = read_batch
+        ref_data = None
+        if ref_provider is not None:
+            ref_data = ref_provider(read[0] if isinstance(read, tuple) else read)
+        return read, compute_scores(model, batch, reverse=reverse, ref_data=ref_data)
+
+    scores = thread_iter(_compute((read, batch)) for read, batch in batches)
 
     results = thread_iter(
         (read, stitch_results(scores, end - start, chunksize, overlap, model.stride, reverse))

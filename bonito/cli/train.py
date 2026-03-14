@@ -77,7 +77,13 @@ def main(args):
         seed=args.seed,
     )
 
-    train_loader, valid_loader = load_data(data, model_setup, compute_settings)
+    kmer_model = None
+    if args.kmer_model:
+        from bonito.rawhash.kmer_model import KmerModel
+        print(f"[loading k-mer model] - {args.kmer_model}")
+        kmer_model = KmerModel(args.kmer_model)
+
+    train_loader, valid_loader = load_data(data, model_setup, compute_settings, kmer_model=kmer_model)
 
     try:
         # Allow the train-loader to write meta-data fields to the config
@@ -143,5 +149,7 @@ def argparser():
     quantile_group.add_argument('--no-quantile-grad-clip', dest='quantile_grad_clip', action='store_false')
     quantile_group.set_defaults(quantile_grad_clip=True)
     parser.add_argument("--num-workers", default=4, type=int)
+    parser.add_argument("--kmer-model", default=None, type=str,
+                        help="Path to ONT k-mer pore model TSV for cross-attention training")
     return parser
 

@@ -107,6 +107,11 @@ class Stack(Serial):
     def from_dict(cls, model_dict, layer_types=None):
         return cls([from_dict(model_dict["layer"], layer_types) for _ in range(model_dict["depth"])])
 
+    def forward(self, x, **kwargs):
+        for layer in self:
+            x = layer(x, **kwargs)
+        return x
+
     def to_dict(self, include_weights=False):
         if include_weights:
             raise NotImplementedError
@@ -257,7 +262,8 @@ class MultiHeadAttention(Module):
 
 @register
 class TransformerEncoderLayer(Module):
-    def __init__(self, d_model, nhead, dim_feedforward, deepnorm_alpha, deepnorm_beta, attn_window=None):
+    def __init__(self, d_model, nhead, dim_feedforward, deepnorm_alpha, deepnorm_beta,
+                 attn_window=None, use_cross_attn=False):
         super().__init__()
         self.kwargs = {
             "d_model": d_model,
@@ -265,13 +271,24 @@ class TransformerEncoderLayer(Module):
             "dim_feedforward": dim_feedforward,
             "deepnorm_alpha": deepnorm_alpha,
             "deepnorm_beta": deepnorm_beta,
-            "attn_window": attn_window
+            "attn_window": attn_window,
+            "use_cross_attn": use_cross_attn,
         }
         self.self_attn = MultiHeadAttention(d_model=d_model, nhead=nhead, attn_window=attn_window)
         self.ff = SwiGLU(d_model, hidden_features=dim_feedforward)
         self.norm1 = torch.nn.RMSNorm(d_model)
         self.norm2 = torch.nn.RMSNorm(d_model)
         self.register_buffer("deepnorm_alpha", torch.tensor(deepnorm_alpha))
+
+        self.use_cross_attn = use_cross_attn
+        if use_cross_attn:
+            from bonito.rawhash.cross_attention import CrossAttention
+            self.cross_attn = CrossAttention(d_model=d_model, nhead=nhead)
+            self.norm_cross = torch.nn.RMSNorm(d_model)
+            # Sigmoid gate: initialized to 0 -> sigmoid(0)=0.5, but combined with
+            # small xavier-init weights the initial cross-attn contribution is small.
+            self.lambda_ref = torch.nn.Parameter(torch.zeros(1))
+
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -282,11 +299,25 @@ class TransformerEncoderLayer(Module):
         torch.nn.init.xavier_normal_(self.self_attn.out_proj.weight, gain=db)
         torch.nn.init.xavier_normal_(self.self_attn.Wqkv.weight[2*d_model:], gain=db)
         torch.nn.init.xavier_normal_(self.self_attn.Wqkv.weight[:2*d_model], gain=1)
+        if self.use_cross_attn:
+            torch.nn.init.xavier_normal_(self.cross_attn.out_proj.weight, gain=db)
+            torch.nn.init.xavier_normal_(self.cross_attn.Wq.weight, gain=1)
+            torch.nn.init.xavier_normal_(self.cross_attn.Wkv.weight, gain=1)
 
-    def forward(self, x):
+    def forward(self, x, R=None):
+        # Self-attention
         attention = self.self_attn(x)
         residual = x * self.deepnorm_alpha
         x = self.norm1(attention + residual)
+
+        # Cross-attention (only when enabled AND reference provided)
+        if self.use_cross_attn and R is not None:
+            cross_out = self.cross_attn(x, R)
+            gate = torch.sigmoid(self.lambda_ref)
+            residual = x * self.deepnorm_alpha
+            x = self.norm_cross(gate * cross_out + residual)
+
+        # Feed-forward
         y = self.ff(x)
         residual = x * self.deepnorm_alpha
         x = self.norm2(y + residual)
@@ -296,6 +327,39 @@ class TransformerEncoderLayer(Module):
         if include_weights:
             raise NotImplementedError
         return self.kwargs
+
+
+@register
+class ReferenceAwareEncoder(Module):
+    """
+    Wraps a NamedSerial encoder, selectively passing reference embeddings R
+    only to Stack layers (transformer encoder) while passing just x to
+    other layers (conv, permute, linear, etc.).
+    """
+
+    def __init__(self, inner_encoder):
+        super().__init__()
+        self.inner_encoder = inner_encoder
+
+    @classmethod
+    def from_dict(cls, model_dict, layer_types=None):
+        inner = from_dict({**model_dict["inner_encoder"], "type": model_dict.get("inner_type", "namedserial")}, layer_types)
+        return cls(inner)
+
+    def forward(self, x, R=None):
+        for name, layer in self.inner_encoder.named_children():
+            if isinstance(layer, Stack) and R is not None:
+                x = layer(x, R=R)
+            else:
+                x = layer(x)
+        return x
+
+    def to_dict(self, include_weights=False):
+        if include_weights:
+            raise NotImplementedError
+        return {
+            "inner_encoder": to_dict(self.inner_encoder),
+        }
 
 
 @register

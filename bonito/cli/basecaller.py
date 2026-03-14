@@ -128,11 +128,48 @@ def main(args):
     else:
         ResultsWriter = Writer
 
+    ref_provider = None
+    if args.rawhash_paf and args.kmer_model and args.ref_fasta:
+        from bonito.rawhash.paf_parser import parse_paf
+        from bonito.rawhash.kmer_model import KmerModel
+        import pysam
+        import torch
+
+        sys.stderr.write("> loading RawHash mappings\n")
+        mappings = parse_paf(args.rawhash_paf)
+        kmer_model_inst = KmerModel(args.kmer_model)
+        ref_fasta = pysam.FastaFile(args.ref_fasta)
+
+        _complement = str.maketrans('ACGTacgt', 'TGCAtgca')
+        def _reverse_complement(seq):
+            return seq.translate(_complement)[::-1]
+
+        def ref_provider(read):
+            read_id = read.read_id if hasattr(read, 'read_id') else None
+            if read_id is None or read_id not in mappings:
+                return None
+            m = mappings[read_id]
+            ref_seq = ref_fasta.fetch(m.target_name, m.target_start, m.target_end)
+            if m.strand == '-':
+                ref_seq = _reverse_complement(ref_seq)
+            base_map = {'A': 1, 'C': 2, 'G': 3, 'T': 4, 'N': 0,
+                        'a': 1, 'c': 2, 'g': 3, 't': 4, 'n': 0}
+            bases = np.array([base_map.get(b, 0) for b in ref_seq], dtype=np.uint8)
+            kmer_ids = kmer_model_inst.bases_to_kmer_ids(bases)
+            expected_signals = kmer_model_inst.get_expected_signal(kmer_ids)
+            return (
+                torch.from_numpy(kmer_ids).unsqueeze(0).long(),
+                torch.from_numpy(expected_signals).unsqueeze(0).float(),
+            )
+
+        sys.stderr.write(f"> loaded {len(mappings)} RawHash mappings\n")
+
     results = basecall(
         model, reads, reverse=args.revcomp, rna=args.rna,
         batchsize=model.config["basecaller"]["batchsize"],
         chunksize=model.config["basecaller"]["chunksize"],
-        overlap=model.config["basecaller"]["overlap"]
+        overlap=model.config["basecaller"]["overlap"],
+        ref_provider=ref_provider,
     )
 
     if aligner:
@@ -196,4 +233,10 @@ def argparser():
     parser.add_argument("--alignment-threads", default=8, type=int)
     parser.add_argument("--mm2-preset", default='lr:hq', type=str)
     parser.add_argument('-v', '--verbose', action='count', default=0)
+    parser.add_argument("--rawhash-paf", default=None, type=str,
+                        help="PAF file from RawHash mapping for reference-guided basecalling")
+    parser.add_argument("--kmer-model", default=None, type=str,
+                        help="Path to ONT k-mer pore model TSV")
+    parser.add_argument("--ref-fasta", default=None, type=str,
+                        help="Reference FASTA for extracting sequences from RawHash mappings")
     return parser

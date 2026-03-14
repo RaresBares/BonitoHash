@@ -29,7 +29,7 @@ class ModelSetup:
     standardisation: Dict
 
 
-def load_data(data, model_setup, compute_settings):
+def load_data(data, model_setup, compute_settings, kmer_model=None):
     try:
         if (Path(data.training_data) / "chunks.npy").exists():
             print(f"[loading data] - chunks from {data.training_data}")
@@ -37,6 +37,7 @@ def load_data(data, model_setup, compute_settings):
                 data.num_train_chunks,
                 data.training_data,
                 valid_chunks=data.num_valid_chunks,
+                kmer_model=kmer_model,
             )
         elif (Path(data.training_data) / "dataset.py").exists():
             print(f"[loading data] - dynamically from {data.training_data}/dataset.py")
@@ -86,6 +87,47 @@ class ChunkDataSet:
         return len(self.lengths)
 
 
+class ReferenceAwareChunkDataSet:
+    """
+    Extends ChunkDataSet to also return k-mer IDs and expected signals
+    derived from the target references using an ONT k-mer pore model.
+    """
+
+    def __init__(self, chunks, targets, lengths, kmer_model):
+        self.chunks = np.expand_dims(chunks, axis=1)
+        self.targets = targets
+        self.lengths = lengths
+        self.kmer_model = kmer_model
+        self._precompute_reference_data()
+
+    def _precompute_reference_data(self):
+        max_kmer_len = max(self.targets.shape[1] - 5, 1)
+        self.kmer_ids = np.zeros((len(self.targets), max_kmer_len), dtype=np.int32)
+        self.expected_signals = np.zeros((len(self.targets), max_kmer_len), dtype=np.float32)
+
+        for i in range(len(self.targets)):
+            ref_len = int(self.lengths[i])
+            if ref_len < 6:
+                continue
+            bases = self.targets[i, :ref_len]
+            kids = self.kmer_model.bases_to_kmer_ids(bases)
+            n = len(kids)
+            self.kmer_ids[i, :n] = kids
+            self.expected_signals[i, :n] = self.kmer_model.get_expected_signal(kids)
+
+    def __getitem__(self, i):
+        return (
+            self.chunks[i].astype(np.float32),
+            self.targets[i].astype(np.int64),
+            self.lengths[i].astype(np.int64),
+            self.kmer_ids[i].astype(np.int64),
+            self.expected_signals[i].astype(np.float32),
+        )
+
+    def __len__(self):
+        return len(self.lengths)
+
+
 def load_script(directory, name="dataset", suffix=".py", **kwargs):
     directory = Path(directory)
     filepath = (directory / name).with_suffix(suffix)
@@ -96,7 +138,7 @@ def load_script(directory, name="dataset", suffix=".py", **kwargs):
     return loader.train_loader_kwargs(**kwargs), loader.valid_loader_kwargs(**kwargs)
 
 
-def load_numpy(limit, directory, valid_chunks):
+def load_numpy(limit, directory, valid_chunks, kmer_model=None):
     """
     Returns training and validation DataLoaders for data in directory.
     """
@@ -111,8 +153,14 @@ def load_numpy(limit, directory, valid_chunks):
         valid_data = [x[split:] for x in train_data]
         train_data = [x[:split] for x in train_data]
 
-    train_loader_kwargs = {"dataset": ChunkDataSet(*train_data), "shuffle": True}
-    valid_loader_kwargs = {"dataset": ChunkDataSet(*valid_data), "shuffle": False}
+    if kmer_model is not None:
+        print("[loading reference-aware dataset with k-mer model]")
+        DatasetClass = ReferenceAwareChunkDataSet
+        train_loader_kwargs = {"dataset": DatasetClass(*train_data, kmer_model=kmer_model), "shuffle": True}
+        valid_loader_kwargs = {"dataset": DatasetClass(*valid_data, kmer_model=kmer_model), "shuffle": False}
+    else:
+        train_loader_kwargs = {"dataset": ChunkDataSet(*train_data), "shuffle": True}
+        valid_loader_kwargs = {"dataset": ChunkDataSet(*valid_data), "shuffle": False}
     return train_loader_kwargs, valid_loader_kwargs
 
 
