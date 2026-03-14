@@ -9,7 +9,7 @@ alphabet = [ "N", "A", "C", "G", "T",]
 [model.ref_embedder]
 type = "referenceembedder"
 d_model = 512
-num_kmers = 4096
+num_kmers = 262144
 
 [model.encoder]
 type = "referenceawareencoder"

@@ -101,13 +101,14 @@ class ReferenceAwareChunkDataSet:
         self._precompute_reference_data()
 
     def _precompute_reference_data(self):
-        max_kmer_len = max(self.targets.shape[1] - 5, 1)
+        kmer_len = self.kmer_model.kmer_len
+        max_kmer_len = max(self.targets.shape[1] - kmer_len + 1, 1)
         self.kmer_ids = np.zeros((len(self.targets), max_kmer_len), dtype=np.int32)
         self.expected_signals = np.zeros((len(self.targets), max_kmer_len), dtype=np.float32)
 
         for i in range(len(self.targets)):
             ref_len = int(self.lengths[i])
-            if ref_len < 6:
+            if ref_len < kmer_len:
                 continue
             bases = self.targets[i, :ref_len]
             kids = self.kmer_model.bases_to_kmer_ids(bases)
