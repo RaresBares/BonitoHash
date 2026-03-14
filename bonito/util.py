@@ -248,6 +248,71 @@ def match_names(state_dict, model):
     return OrderedDict([(k, remap[k]) for k in state_dict.keys()])
 
 
+def load_weights_partial(model, pretrained_dir, device):
+    """
+    Load pretrained weights into a model that may have extra parameters.
+
+    Matches parameters by name suffix and shape. Parameters present in the
+    model but missing from the checkpoint (e.g. cross-attention layers) are
+    left at their random initialization.
+
+    Returns the number of loaded and skipped parameters.
+    """
+    if not os.path.isdir(pretrained_dir):
+        candidate = os.path.join(__models_dir__, pretrained_dir)
+        if os.path.isdir(candidate):
+            pretrained_dir = candidate
+    weight_file = get_last_checkpoint(pretrained_dir)
+    pretrained_sd = torch.load(weight_file, map_location=device)
+    # Strip 'module.' prefix from pretrained keys
+    pretrained_sd = OrderedDict(
+        (k.replace('module.', ''), v) for k, v in pretrained_sd.items()
+    )
+
+    model_sd = model.state_dict()
+    loaded, skipped = 0, 0
+
+    # Build a lookup: short suffix → full model key (for flexible matching)
+    # e.g. "encoder.layers.0.self_attn.Wqkv.weight" matches regardless of wrapper
+    suffix_to_model_key = {}
+    for mk in model_sd:
+        # Try progressively shorter suffixes until unique
+        parts = mk.split('.')
+        for start in range(len(parts)):
+            suffix = '.'.join(parts[start:])
+            if suffix not in suffix_to_model_key:
+                suffix_to_model_key[suffix] = mk
+                break
+
+    new_sd = OrderedDict()
+    for pk, pv in pretrained_sd.items():
+        # Try exact match first
+        if pk in model_sd and model_sd[pk].shape == pv.shape:
+            new_sd[pk] = pv
+            loaded += 1
+            continue
+        # Try suffix matching
+        parts = pk.split('.')
+        matched = False
+        for start in range(len(parts)):
+            suffix = '.'.join(parts[start:])
+            if suffix in suffix_to_model_key:
+                mk = suffix_to_model_key[suffix]
+                if model_sd[mk].shape == pv.shape and mk not in new_sd:
+                    new_sd[mk] = pv
+                    loaded += 1
+                    matched = True
+                    break
+        if not matched:
+            skipped += 1
+
+    model.load_state_dict(new_sd, strict=False)
+    new_params = len(model_sd) - loaded
+    print(f"[init-weights] loaded {loaded} params, skipped {skipped} pretrained params, "
+          f"{new_params} new params randomly initialized")
+    return loaded, skipped
+
+
 def get_last_checkpoint(dirname):
     weight_files = glob(os.path.join(dirname, "weights_*.tar"))
     if not weight_files:

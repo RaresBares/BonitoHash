@@ -15,7 +15,7 @@ import torch
 
 from bonito.training import Trainer
 from bonito.data import load_data, ModelSetup, ComputeSettings, DataSettings
-from bonito.util import __models_dir__, default_config, load_model, load_symbol, init
+from bonito.util import __models_dir__, default_config, load_model, load_symbol, load_weights_partial, init
 
 
 def main(args):
@@ -52,6 +52,9 @@ def main(args):
         model = load_model(args.pretrained, device, half=False, compile=False)
     else:
         model = load_symbol(config, 'Model')(config)
+        if args.init_weights:
+            print(f"[loading partial weights from {args.init_weights}]")
+            load_weights_partial(model, args.init_weights, device)
 
     if not args.no_compile:
         try:
@@ -151,5 +154,7 @@ def argparser():
     parser.add_argument("--num-workers", default=4, type=int)
     parser.add_argument("--kmer-model", default=None, type=str,
                         help="Path to ONT k-mer pore model TSV for cross-attention training")
+    parser.add_argument("--init-weights", default=None, type=str,
+                        help="Pretrained model dir to partially load weights from (use with --config for cross-attention)")
     return parser
 
