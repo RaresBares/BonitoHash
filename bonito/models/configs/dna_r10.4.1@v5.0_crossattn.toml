@@ -1,0 +1,122 @@
+[model]
+type = "seqdistmodel"
+package = "bonito.transformer"
+
+[model.seqdist]
+state_len = 5
+alphabet = [ "N", "A", "C", "G", "T",]
+
+[model.ref_embedder]
+type = "referenceembedder"
+d_model = 512
+num_kmers = 4096
+
+[model.encoder]
+type = "referenceawareencoder"
+
+[model.encoder.inner_encoder.conv]
+type = "serial"
+[[model.encoder.inner_encoder.conv.sublayers]]
+type = "convolution"
+insize = 1
+size = 64
+bias = true
+winlen = 5
+stride = 1
+padding = 2
+activation = "swish"
+norm = "batchnorm"
+
+[[model.encoder.inner_encoder.conv.sublayers]]
+type = "convolution"
+insize = 64
+size = 64
+bias = true
+winlen = 5
+stride = 1
+padding = 2
+activation = "swish"
+norm = "batchnorm"
+
+[[model.encoder.inner_encoder.conv.sublayers]]
+type = "convolution"
+insize = 64
+size = 128
+bias = true
+winlen = 9
+stride = 3
+padding = 4
+activation = "swish"
+norm = "batchnorm"
+
+[[model.encoder.inner_encoder.conv.sublayers]]
+type = "convolution"
+insize = 128
+size = 128
+bias = true
+winlen = 9
+stride = 2
+padding = 4
+activation = "swish"
+norm = "batchnorm"
+
+[[model.encoder.inner_encoder.conv.sublayers]]
+type = "convolution"
+insize = 128
+size = 512
+bias = true
+winlen = 5
+stride = 2
+padding = 2
+activation = "swish"
+norm = "batchnorm"
+
+[[model.encoder.inner_encoder.conv.sublayers]]
+type = "permute"
+dims = [ 0, 2, 1,]
+
+[model.encoder.inner_encoder.transformer_encoder]
+type = "stack"
+depth = 18
+
+[model.encoder.inner_encoder.transformer_encoder.layer]
+type = "transformerencoderlayer"
+d_model = 512
+nhead = 8
+dim_feedforward = 2048
+deepnorm_alpha = 2.4494897
+deepnorm_beta = 0.2886751
+attn_window = [ 127, 128,]
+use_cross_attn = true
+
+[model.encoder.inner_encoder.upsample]
+type = "linearupsample"
+d_model = 512
+scale_factor = 2
+
+[model.encoder.inner_encoder.crf]
+type = "linearcrfencoder"
+insize = 512
+n_base = 4
+state_len = 5
+bias = false
+scale = 5.0
+blank_score = 2.0
+expand_blanks = true
+permute = [ 1, 0, 2,]
+
+[scaling]
+strategy = "pa"
+
+[run_info]
+sample_type = "dna"
+sample_rate = 5000
+
+[qscore]
+scale = 1.05
+bias = 1.3
+
+[basecaller]
+batchsize = 128
+chunksize = 12000
+overlap = 600
